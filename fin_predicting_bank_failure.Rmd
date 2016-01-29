@@ -1,0 +1,358 @@
+---
+title: "predicting bank failures"
+author: "michael downs"
+date: "November 18, 2015"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r eval=TRUE,cache=TRUE,echo=FALSE,message=FALSE,results='hide',warning=FALSE,fig.show='asis',fig.height=3.5,fig.width=5}
+library(xts)
+library(urca)
+library(quantmod)
+library(fUnitRoots)
+library(PerformanceAnalytics)
+library(highfrequency)
+library(fOptions)
+library(optimx)
+library(fExoticOptions)
+#library(timeSeries)
+#library(timeDate)
+
+#library(lubridate)
+#library(tseries)
+#library(TTR)
+#library(caret)
+#library(mondate)
+#library(MTS)
+#library(car)
+
+```
+
+## problem 2
+
+*(a) Use stepwise forward selection by AIC. Are the coefficients significant?*
+
+Forward search using AIC resulted in an 8 parameter model with a 215 AIC. Seven coefficients are significant at $p<0.05$. Summary of that model below. 
+
+```{r eval=TRUE,cache=TRUE,echo=FALSE,message=FALSE,results='markup',warning=FALSE,fig.show='asis',fig.height=4,fig.width=7}
+
+CAbanks=read.csv("~/Documents/Pers/Ed/Courses/stats241p/homework/CAbanks.csv")
+p2.dat=CAbanks[,c("fail","deppct","eqpct","rbc1rwaj","rbcrwaj","p3assetpct","nclnlspct","scpct",
+                  "voliabpct","roa","LIBOR1M","LIBOR3M","LIBOR6M","CSW","CPI","Unemploymt")]
+
+# forward from null to all on AIC: 215.3
+null.mdl=glm(as.factor(fail)~1,data=p2.dat,family=binomial)
+full.mdl=glm(as.factor(fail)~.,data=p2.dat,family=binomial)
+
+fwd.aic.base=step(null.mdl, scope=list(lower=null.mdl, upper=full.mdl), 
+                  direction="forward",k=2,trace=F)
+
+summary(fwd.aic.base)
+
+```
+
+\textbf{comments:}
+
+The AIC fit improves with interactions. Beginning with the same null model, but specifying a final model that includes interactions (i.e., *full.mdl=glm(as.factor(fail)~.^2,data=p2.dat,family=binomial)*), blows up to a 23 variable model. However, AIC, including the penalty for all those variables, falls to 172. As we will see in the comments below, the BIC model with interactions is very different. 
+
+```{r eval=TRUE,cache=TRUE,echo=FALSE,message=FALSE,results='markup',warning=FALSE,fig.show='asis',fig.height=4,fig.width=7}
+
+# fwd from null with interactions: 172.4
+full.mdl=glm(as.factor(fail)~.^2,data=p2.dat,family=binomial)
+
+fwd.aic.int=step(null.mdl, scope=list(lower=null.mdl, upper=full.mdl), 
+                 direction="forward",k=2,trace=F)
+
+#summary(fwd.aic.int)
+
+```
+
+*Repeat the steps with model selection by BIC*
+
+Forward search using BIC resulted in an 5 parameter model with a 223 AIC. All five coefficients are significant at $p<0.001$. Summary of that model below.
+
+```{r eval=TRUE,cache=TRUE,echo=FALSE,message=FALSE,results='markup',warning=FALSE,fig.show='asis',fig.height=4,fig.width=7}
+
+# forward from null to all on BIC results in AIC: 216.7
+null.mdl=glm(as.factor(fail)~1,data=p2.dat,family=binomial)
+full.mdl=glm(as.factor(fail)~.,data=p2.dat,family=binomial)
+
+fwd.bic.base=step(null.mdl, scope=list(lower=null.mdl, upper=full.mdl), 
+                  direction="forward",k=log(dim(p2.dat)[1]),trace=F)
+
+summary(fwd.bic.base)
+
+```
+
+*Why is the final selection different?*
+
+All five BIC variables are included in the AIC model. However, the AIC model goes on to include CPI, deppct and eqpct. While AIC and BIC have different assumptions about asymptotic approximations, the effect of these differences is that BIC applies a greater penalty for model complexity. In this case, the AIC penalty is $2*p$ where $p$ is the number of variables. The BIC penalty $log(n)*p$ where $n=10,000+$ observations in the data set. So, BIC is applying a penalty that is closer to $9*p$. 
+
+*Does the final model selected by BIC make sense to you?*
+
+Yes, given how the dependent variable ($fail$) is encoded. The data set has 10k+ observations of which 78 are encoded with $fail=1$. There are 38 unique names associated with these failures - roughly two records for each failed bank covering the reporting periods within 183 days of the failure. 
+
+BIC forward stepwise has found the variables most highly associated with the $fail=1$ encoding (and different from $fail=0$ encoding) given the 183 day constraint. Those variables can be grouped into three categories:
+
+(1) Indicators of falling income. nclnlspct (non-current loans & leases / assets) and p3assetpct (loans 30-89 days pass due / assets) indicate that inflows from interest income and pricipal repayment will be less than planned. 
+
+(2) Indicators of volatile (and likely increasing) expense. voliabpct (volatile liabilities / assets) indicates these banks have high variable expenses in their captial structures.
+
+(3) Indicators of low liquidity. scpct (investment securities / assets) and rbc1rwaj (tier 1 risk-based capital / risk-adjusted assets) indicate inadequate financial buffers. These banks had few assets they could sell quickly to bridge the income-expsense gap.
+
+\textbf{comments:}
+
+Interestingly, BIC forward search including interaction terms results in the same 5 variable, 223 AIC model as above. This further illustrates the magnitude of the BIC penalty discussed in: *Why is the final selection different?*. 
+
+```{r eval=TRUE,cache=TRUE,echo=FALSE,message=FALSE,results='markup',warning=FALSE,fig.show='asis',fig.height=4,fig.width=7}
+
+# fwd from null with interactions, log(2): 223.2
+full.mdl=glm(as.factor(fail)~.^2,data=p2.dat,family=binomial)
+
+fwd.bic.int=step(null.mdl, scope=list(lower=null.mdl, upper=full.mdl), 
+                 direction="forward",k=log(dim(p2.dat)[1]),trace=F)
+
+#summary(fwd.bic.int)
+
+```
+
+\textbf{code:}
+```{r eval=FALSE,cache=FALSE,echo=TRUE,message=FALSE,results='markup',warning=FALSE,fig.show='asis',fig.height=4,fig.width=7}
+
+#******** implementation code
+
+CAbanks=read.csv("~/Documents/Pers/Ed/Courses/stats241p/homework/CAbanks.csv")
+p2.dat=CAbanks[,c("fail","deppct","eqpct","rbc1rwaj","rbcrwaj","p3assetpct","nclnlspct","scpct",
+                  "voliabpct","roa","LIBOR1M","LIBOR3M","LIBOR6M","CSW","CPI","Unemploymt")]
+
+# forward from null to all on AIC: 215.3
+null.mdl=glm(as.factor(fail)~1,data=p2.dat,family=binomial)
+full.mdl=glm(as.factor(fail)~.,data=p2.dat,family=binomial)
+
+fwd.aic.base=step(null.mdl, scope=list(lower=null.mdl, upper=full.mdl), 
+                  direction="forward",k=2,trace=F)
+
+summary(fwd.aic.base)
+
+# fwd from null with interactions: 172.4
+full.mdl=glm(as.factor(fail)~.^2,data=p2.dat,family=binomial)
+
+fwd.aic.int=step(null.mdl, scope=list(lower=null.mdl, upper=full.mdl), 
+                 direction="forward",k=2,trace=F)
+
+summary(fwd.aic.int)
+
+# forward from null to all on BIC results in AIC: 216.7
+null.mdl=glm(as.factor(fail)~1,data=p2.dat,family=binomial)
+full.mdl=glm(as.factor(fail)~.,data=p2.dat,family=binomial)
+
+fwd.bic.base=step(null.mdl, scope=list(lower=null.mdl, upper=full.mdl), 
+                  direction="forward",k=log(dim(p2.dat)[1]),trace=F)
+
+summary(fwd.bic.base)
+
+#********** i've omitted comment code as it's not core
+
+```
+
+*(b) Calculate the estimated default probability using the BIC fitted model. Investigate those banks with (estimated) default probability > 0. Do you see any common pattern?*
+
+I looked at companies with a \textbf{predicted} probability of default > 0.001 as it was at this level that the percent of \textbf{actual} defaulters in the high predicted probability cohort was 10X the percent of \textbf{actual} defaulters in the low predicted probability cohort. 
+
+```{r eval=TRUE,cache=TRUE,echo=FALSE,message=FALSE,results='markup',warning=FALSE,fig.show='asis',fig.height=4,fig.width=7}
+
+preds=predict(fwd.bic.base,type="response")
+
+hi.prb.dflt=p2.dat[preds>0.001,]
+cat("proportion actual defaults in high predicted default cohort:", sum(hi.prb.dflt$fail)/dim(hi.prb.dflt)[1])
+cat("proportion actual defaults in low predicted default cohort:",sum(p2.dat$fail)/dim(p2.dat)[1])
+
+```
+
+The plots below show significant differences in mean values for the BIC predictors for the low \textbf{predicted} default probabilty cohort (lhs) and high predicted default probability cohort. 
+
+```{r eval=TRUE,cache=TRUE,echo=FALSE,message=FALSE,results='markup',warning=FALSE,fig.show='asis',fig.height=7,fig.width=7}
+
+key.vars=names(fwd.bic.base$coefficients)[-1]
+par(mfrow=c(3,2))
+for(i in 1:length(key.vars)){
+     hi.prb.num=mean(hi.prb.dflt[,c(key.vars[i])])
+     base.num=mean(p2.dat[,c(key.vars[i])])
+     boxplot(base.num,hi.prb.num,main=paste("cohort comparison:",key.vars[i]),
+             xlab=c("low prob cohort             hi prob cohort"))
+}
+
+```
+
+Using the framework from 2(a), I find that banks in the high predicted default probability cohort had:
+
+(1) Falling loan income: Significantly higher levels of non-performing assets including 2X non-current loans & leases / total assets and 2X loans 30 to 89 days pass due / total assets.
+
+(2) Volatile expenses: Significantly higher (1.6X) levels of volatile liabilities / assets.
+
+(3) Low liquidity: Only marginally higher (1.08X) levels of short term capital and significnatly lower (0.33X) levels of tier 1 capital. 
+
+\textbf{code:}
+```{r eval=FALSE,cache=FALSE,echo=TRUE,message=FALSE,results='markup',warning=FALSE,fig.show='asis',fig.height=4,fig.width=7}
+
+preds=predict(fwd.bic.base,type="response")
+
+hi.prb.dflt=p2.dat[preds>0.001,]
+cat("proportion actual defaults in high predicted default cohort:", 
+    sum(hi.prb.dflt$fail)/dim(hi.prb.dflt)[1])
+cat("proportion actual defaults in low predicted default cohort:",
+    sum(p2.dat$fail)/dim(p2.dat)[1])
+
+key.vars=names(fwd.bic.base$coefficients)[-1]
+par(mfrow=c(3,2))
+for(i in 1:length(key.vars)){
+     hi.prb.num=mean(hi.prb.dflt[,c(key.vars[i])])
+     base.num=mean(p2.dat[,c(key.vars[i])])
+     boxplot(base.num,hi.prb.num,main=paste("cohort comparison:",key.vars[i]),
+             xlab=c("low prob cohort             hi prob cohort"))
+
+```
+
+## problem 3
+*Take the last record of each bank (335). Treat each as an independent observation.*
+
+*(a) Apply LDA. Evaluate using LOOCV.* 
+
+The output below was generated by comparing LOOCV predictions with actual defaults using $confusionMatrix$ in the Caret package. See commentary in 3(b) below.
+
+```{r eval=TRUE,cache=TRUE,echo=FALSE,message=FALSE,results='markup',warning=FALSE,fig.show='asis',fig.height=4,fig.width=7}
+
+library(MASS)
+library(caret)
+
+# build data set selcting last record for each bank
+tgt.vars=c("fail","rbc1rwaj", "nclnlspct", "voliabpct", "scpct", "p3assetpct", "CPI", "deppct", "eqpct")
+p3.dat=as.data.frame(matrix(NA,0,9));names(p3.dat)=tgt.vars
+bnk.nms=unique(CAbanks$name)
+
+for(i in 1:length(bnk.nms)){
+     tmp=CAbanks[CAbanks$name==bnk.nms[i],tgt.vars]
+     p3.dat[i,]=tmp[dim(tmp)[1],]
+}
+p3.dat$fail=as.factor(p3.dat$fail)
+
+prd=NULL
+# LOOCV
+for(i in 1:dim(p3.dat)[1]){
+     tst.y=p3.dat$fail[i]
+     tst.x=p3.dat[i,-1]
+     trn.y=p3.dat$fail[-i]
+     trn.x=p3.dat[-i,-1]
+     
+     fit=lda(trn.y~.,data=trn.x)
+     prd[i]=predict(fit,tst.x)$class
+}
+
+confusionMatrix(prd-1,p3.dat$fail,positive="1")
+
+```
+
+*Choose two variables and visualize the final LDA classification on a 2D plot.*
+
+```{r eval=TRUE,cache=TRUE,echo=FALSE,message=FALSE,results='markup',warning=FALSE,fig.show='asis',fig.height=5,fig.width=7}
+
+par(mfrow=c(1,2))
+plot(p3.dat$nclnlspct~p3.dat$voliabpct,col=prd,
+     main="Predicted",lwd=2,xlab="Volatile Liabilities",ylab="Non-current Loans ~")
+legend("topright",col=c("red","black"),lwd=2,legend=c("default","no default"),cex=0.85)
+
+plot(p3.dat$nclnlspct~p3.dat$voliabpct,col=p3.dat$fail,
+     main="Actual",lwd=2,xlab="Volatile Liabilities",ylab="Non-current Loans ~")
+legend("topright",col=c("red","black"),lwd=2,legend=c("default","no default"),cex=0.85)
+
+```
+
+\textbf{code:}
+```{r eval=FALSE,cache=FALSE,echo=TRUE,message=FALSE,results='markup',warning=FALSE,fig.show='asis',fig.height=4,fig.width=7}
+
+library(MASS)
+library(caret)
+
+# build data set selecting last record for each bank
+tgt.vars=c("fail","rbc1rwaj", "nclnlspct", "voliabpct", 
+           "scpct", "p3assetpct", "CPI", "deppct", "eqpct")
+p3.dat=as.data.frame(matrix(NA,0,9));names(p3.dat)=tgt.vars
+bnk.nms=unique(CAbanks$name)
+
+for(i in 1:length(bnk.nms)){
+     tmp=CAbanks[CAbanks$name==bnk.nms[i],tgt.vars]
+     p3.dat[i,]=tmp[dim(tmp)[1],]
+}
+p3.dat$fail=as.factor(p3.dat$fail)
+
+prd=NULL
+# LOOCV
+for(i in 1:dim(p3.dat)[1]){
+     tst.y=p3.dat$fail[i]
+     tst.x=p3.dat[i,-1]
+     trn.y=p3.dat$fail[-i]
+     trn.x=p3.dat[-i,-1]
+     
+     fit=lda(trn.y~.,data=trn.x)
+     prd[i]=predict(fit,tst.x)$class
+}
+
+confusionMatrix(prd-1,p3.dat$fail,positive="1")
+
+par(mfrow=c(2,1))
+plot(p3.dat$nclnlspct~p3.dat$voliabpct,col=prd,
+     main="Predicted: Non-current Loans ~ Volatile Liabilities",lwd=2)
+legend("topright",col=c("red","black"),lwd=2,legend=c("default","no default"),cex=0.85)
+
+plot(p3.dat$nclnlspct~p3.dat$voliabpct,col=p3.dat$fail,
+     main="Actual: Non-current Loans ~ Volatile Liabilities",lwd=2)
+legend("topright",col=c("red","black"),lwd=2,legend=c("default","no default"),cex=0.85)
+
+```
+
+*(b) Apply QDA on the same subset of data. Evaluate the model through LOOCV.*
+
+```{r eval=TRUE,cache=TRUE,echo=FALSE,message=FALSE,results='markup',warning=FALSE,fig.show='asis',fig.height=4,fig.width=7}
+
+prd=NULL
+# LOOCV
+for(i in 1:dim(p3.dat)[1]){
+     tst.y=p3.dat$fail[i]
+     tst.x=p3.dat[i,-1]
+     trn.y=p3.dat$fail[-i]
+     trn.x=p3.dat[-i,-1]
+     
+     fit=qda(trn.y~.,data=trn.x)
+     prd[i]=predict(fit,tst.x)$class
+}
+
+confusionMatrix(prd-1,p3.dat$fail,positive="1")
+
+```
+
+*Compare QDA and LDA results. Which one should be used?*
+
+If we assume the objective is to put in place a regulatory scheme that reduces future bank failures, then the consequences of a false negative (missing a bank that subsequently defaults) are relatively greater than the consequences of a false positive (increasing scrutiny of a bank that subsequently does not default). Therefore, sensitivity (the proportion of defaulters correctly identified) will be key. Positive predictive value (when predict default, bank does default) is slightly less important, again because over-scrutiny is less damaging than missed defaults. 
+
+While QDA has a slighly lower positive predictive value (0.79 vs 0.80), I would select QDA given its greater sensitivity (0.95 vs. 0.82). The net effect is seen in a higher detection rate (0.11 vs 0.10). Further, QDA is overall more accurate (0.964 vs. 0.955). 
+
+\textbf{code:}
+```{r eval=FALSE,cache=FALSE,echo=TRUE,message=FALSE,results='markup',warning=FALSE,fig.show='asis',fig.height=4,fig.width=7}
+
+prd=NULL
+# LOOCV
+for(i in 1:dim(p3.dat)[1]){
+     tst.y=p3.dat$fail[i]
+     tst.x=p3.dat[i,-1]
+     trn.y=p3.dat$fail[-i]
+     trn.x=p3.dat[-i,-1]
+     
+     fit=qda(trn.y~.,data=trn.x)
+     prd[i]=predict(fit,tst.x)$class
+}
+
+confusionMatrix(prd-1,p3.dat$fail,positive="1")
+
+```
